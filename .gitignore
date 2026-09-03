@@ -1,0 +1,43 @@
+# Môi trường Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Dataset MMOTU (ảnh/mask lớn, tải riêng)
+dataset/
+
+# File CSV sinh ra khi chạy notebook
+mmotu_dataset_summary.csv
+mmotu_feature_summary.csv
+
+# Checkpoint / artifact mô hình
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.h5
+runs/
+checkpoints/
+outputs/
+wandb/
+mlruns/
+lightning_logs/
+
+# IDE / hệ điều hành
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Bí mật
+.env
+.env.*
