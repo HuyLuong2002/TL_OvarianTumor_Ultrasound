@@ -1,4 +1,4 @@
-# Thiết kế mục 4–5: Phân loại u buồng trứng bằng transfer learning (DenseNet121)
+# Thiết kế mục 4–5: Phân loại u buồng trứng bằng transfer learning (ResNet50)
 
 Ngày: 2026-09-15
 Trạng thái: đã được duyệt, chờ lập kế hoạch triển khai
@@ -27,8 +27,8 @@ Ngoài phạm vi: phân đoạn, Dice/IoU, Grad-CAM hay bất kỳ hình thức 
 | --- | --- |
 | Bài toán | Phân loại 8 lớp, không phân đoạn |
 | Framework | PyTorch + torchvision |
-| Backbone | DenseNet121, weight ImageNet-1k |
-| So sánh kiến trúc | Chỉ so sánh trên giấy + số tham số in bằng code cho ResNet50, EfficientNet-B0, DenseNet121; **chỉ train DenseNet121** |
+| Backbone | ResNet50, weight ImageNet-1k (`IMAGENET1K_V2`) |
+| So sánh kiến trúc | Chỉ so sánh trên giấy + số tham số in bằng code cho ResNet50, EfficientNet-B0, DenseNet121; **chỉ train ResNet50** |
 | Kích thước ảnh | 384×384 (giữ nguyên mục 3.3) |
 | Thí nghiệm | 1 backbone × 3 tỷ lệ split đã có |
 | Phần cứng | Colab hosted runtime, GPU T4 |
@@ -39,22 +39,26 @@ Ngoài phạm vi: phân đoạn, Dice/IoU, Grad-CAM hay bất kỳ hình thức 
 
 ### 4.1 Model chính
 
-- `torchvision.models.densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1)`.
-- Thay `classifier` gốc (`Linear(1024, 1000)`) bằng `Sequential(Dropout(0.3), Linear(1024, 8))`.
+- `torchvision.models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)`. Dùng bộ weight V2 vì nó đạt 80.86% top-1 trên ImageNet so với 76.13% của V1, cùng kiến trúc nên không phải đổi gì trong code.
+- Thay `fc` gốc (`Linear(2048, 1000)`) bằng `Sequential(Dropout(0.3), Linear(2048, 8))`.
 - Đầu vào: ảnh xám 384×384 trong `[0,1]` lấy từ cache, nhân thành 3 kênh giống nhau, chuẩn hóa bằng mean/std ImageNet (`[0.485, 0.456, 0.406]` / `[0.229, 0.224, 0.225]`). Nhân 3 kênh là điều kiện để dùng được weight pretrained vốn học trên ảnh RGB.
-- Số tham số: DenseNet121 gốc có 7,978,856 tham số; sau khi thay head 8 lớp còn khoảng 6.96M. Con số chính xác sẽ được in bằng code, không chép tay.
+- Số tham số: ResNet50 gốc có 25,557,032 tham số; sau khi thay head 8 lớp còn khoảng 23.5M. Con số chính xác sẽ được in bằng code, không chép tay.
 
 ### 4.2 Chiến lược fine-tune hai giai đoạn
 
-**Giai đoạn 1 — warm-up head.** Đóng băng toàn bộ `features`, chỉ train head (8,200 tham số). 5 epoch, lr 1e-3. Mục đích: head khởi tạo ngẫu nhiên sinh gradient lớn, nếu train chung ngay từ đầu sẽ làm nhiễu weight pretrained.
+**Giai đoạn 1 — warm-up head.** Đóng băng toàn bộ backbone, chỉ train `fc` (16,392 tham số). 5 epoch, lr 1e-3. Mục đích: head khởi tạo ngẫu nhiên sinh gradient lớn, nếu train chung ngay từ đầu sẽ làm nhiễu weight pretrained.
 
-**Giai đoạn 2 — fine-tune phần sâu.** Mở `features.denseblock3`, `features.transition3`, `features.denseblock4`, `features.norm5` và head; giữ đóng băng `features.conv0`, `norm0`, `denseblock1`, `transition1`, `denseblock2`, `transition2`. 25 epoch, lr 1e-4, `CosineAnnealingLR`. Lý do giữ các tầng đầu: chúng học cạnh và texture cơ bản, dùng lại được cho ảnh siêu âm, và giảm số tham số phải học trên tập chỉ ~1000 ảnh train.
+**Giai đoạn 2 — fine-tune phần sâu.** Mở `layer3`, `layer4` và `fc`; giữ đóng băng `conv1`, `bn1`, `layer1`, `layer2`. 25 epoch, lr 1e-4, `CosineAnnealingLR`. Số tham số học ở giai đoạn này khoảng 22.1M trên tổng 23.5M, phần đóng băng chỉ còn ~1.44M. Lý do giữ các tầng đầu: chúng học cạnh và texture cơ bản, dùng lại được cho ảnh siêu âm, và giảm số tham số phải học trên tập chỉ ~1000 ảnh train.
 
 **Xử lý BatchNorm.** Các module bị đóng băng phải được đặt `.eval()` trong suốt quá trình train (không chỉ `requires_grad=False`), để BatchNorm không cập nhật `running_mean` / `running_var`. Nếu bỏ qua bước này, thống kê BN của phần backbone "đã đóng băng" vẫn trôi theo dữ liệu mới và làm mất tác dụng của việc đóng băng. Đây là lỗi thường gặp và phải được kiểm tra bằng một assert đếm số module đang ở chế độ train.
 
 ### 4.3 Bảng so sánh kiến trúc
 
-Một cell khởi tạo cả 3 backbone (không train) và in bảng: tên, số tham số tổng, số tham số sau khi thay head 8 lớp, số chiều feature trước classifier (2048 / 1280 / 1024). Kèm markdown giải thích lý do chọn DenseNet121: nhẹ hơn ResNet50 khoảng 3.4 lần nên ít overfit hơn trên 1469 ảnh, dense connection tái sử dụng feature giữa các tầng nên giữ được chi tiết nhỏ, và là kiến trúc rất phổ biến trong ảnh y tế (CheXNet) nên dễ biện luận trong báo cáo. Kèm `torchinfo.summary` cho model chính (cài `torchinfo` bằng pip nếu thiếu).
+Một cell khởi tạo cả 3 backbone (không train) và in bảng: tên, số tham số tổng, số tham số sau khi thay head 8 lớp, số chiều feature trước classifier (ResNet50 2048, EfficientNet-B0 1280, DenseNet121 1024).
+
+Markdown kèm theo giải thích lý do chọn ResNet50: paper MMOTU gốc báo cáo baseline phân loại trên họ ResNet/VGG/DenseNet nên số của ta đối chiếu được trực tiếp; kiến trúc residual kinh điển, dễ trình bày trong báo cáo và có sẵn bộ weight `IMAGENET1K_V2` mạnh hơn hẳn V1. Đồng thời nêu rõ đánh đổi: ResNet50 có 23.5M tham số, nhiều hơn DenseNet121 (~7M) và EfficientNet-B0 (~4M), nên nguy cơ overfit trên ~1000 ảnh train cao hơn — đây chính là lý do phải đóng băng `conv1`/`layer1`/`layer2`, dùng dropout 0.3, augment nhẹ và early stopping theo macro-F1.
+
+Kèm `torchinfo.summary` cho model chính (cài `torchinfo` bằng pip nếu thiếu).
 
 ## 5. Pipeline dữ liệu (mục 3.5 + 5.1)
 
@@ -103,7 +107,7 @@ Mục 1–3 chạy ở local, mục 4–5 chạy trên kernel Colab, tức **hai
 - Scheduler: giai đoạn 1 lr cố định 1e-3; giai đoạn 2 `CosineAnnealingLR` từ 1e-4 trong 25 epoch.
 - Mixed precision: `torch.amp.autocast` + `GradScaler`, nhanh khoảng gấp đôi trên T4 và giảm VRAM. Nếu OOM thì hạ batch xuống 16.
 - Early stopping: chỉ áp ở giai đoạn 2, theo **macro-F1 trên val**, patience 7. Giai đoạn 1 luôn chạy đủ 5 epoch. Không dùng accuracy để chọn checkpoint vì dữ liệu lệch lớp nên accuracy bị các lớp đông (0, 2, 5) chi phối.
-- Checkpoint: lưu state_dict tốt nhất ra Drive theo tên `densenet121_<split_col>_best.pt`.
+- Checkpoint: lưu state_dict tốt nhất ra Drive theo tên `resnet50_<split_col>_best.pt` (~90 MB mỗi file).
 - Seed 42 cho `random`, `numpy`, `torch`, `torch.cuda`.
 - Lịch sử mỗi epoch (train loss, val loss, val accuracy, val macro-F1, lr) lưu ra `train_history_<split_col>.csv`.
 - Ba tỷ lệ split được train tuần tự trong một vòng lặp; mỗi tỷ lệ **khởi tạo lại model từ weight ImageNet** với cùng seed.
@@ -133,8 +137,8 @@ Toàn bộ code nằm trong notebook, không tách file `.py`, giữ đúng ki�
 | 3.5 | Tạo cache `.npy` + `index.csv`, kiểm tra lại cache | Local |
 | 4.0 | Cấu hình môi trường: nhận biết Colab, mount Drive, `device`, seed, pip install `torchinfo` | Colab |
 | 4.1 | Markdown: phát biểu bài toán phân loại 8 lớp | — |
-| 4.2 | Bảng so sánh 3 backbone (code in số tham số) + lý do chọn DenseNet121 | Colab |
-| 4.3 | Định nghĩa model DenseNet121 + head, `torchinfo.summary` | Colab |
+| 4.2 | Bảng so sánh 3 backbone (code in số tham số) + lý do chọn ResNet50 | Colab |
+| 4.3 | Định nghĩa model ResNet50 + head, `torchinfo.summary` | Colab |
 | 4.4 | Hàm đóng băng/mở tầng theo giai đoạn + markdown giải thích | Colab |
 | 5.1 | Nạp cache, `Dataset`/`DataLoader`, augment tensor, `class_weight` theo split | Colab |
 | 5.2 | Vòng train (train/eval một epoch, AMP, early stopping) | Colab |
@@ -159,7 +163,7 @@ Giữ nguyên: mục 2.4, 2.6, 2.7 (EDA dùng mask), hàm `preprocess_mask` và 
 | --- | --- |
 | Session Colab đứt giữa lúc train | Checkpoint và history lưu trực tiếp lên Drive sau mỗi epoch cải thiện, train lại được từng tỷ lệ độc lập |
 | OOM ở batch 32, ảnh 384×384 | Hạ batch xuống 16; nếu vẫn OOM thì 8 kèm gradient accumulation |
-| Overfit do chỉ ~1000 ảnh train | Đóng băng nửa đầu backbone, dropout 0.3, augment nhẹ, early stopping theo macro-F1 |
+| Overfit do 23.5M tham số nhưng chỉ ~1000 ảnh train | Đóng băng `conv1`/`layer1`/`layer2`, dropout 0.3, weight decay 1e-4, augment nhẹ, early stopping theo macro-F1. Nếu val loss vẫn tách xa train loss ngay từ vài epoch đầu của giai đoạn 2 thì đóng băng thêm `layer3`, chỉ fine-tune `layer4` + `fc` |
 | Lớp 7 chỉ 43 ảnh train nên F1 rất thấp | class weight balanced; báo cáo F1 từng lớp thay vì chỉ accuracy; nêu rõ hạn chế ở mục 6 |
 | Cache lệch thứ tự với CSV nhãn | Cell 3.5 tự kiểm tra lại một mẫu random và assert `len(npy) == len(csv)` |
 | Thống kê BatchNorm trôi ở tầng đã đóng băng | Gọi `.eval()` cho module đóng băng ở mỗi epoch và assert số module đang ở chế độ train |
@@ -168,7 +172,7 @@ Giữ nguyên: mục 2.4, 2.6, 2.7 (EDA dùng mask), hàm `preprocess_mask` và 
 
 1. Mục 3.5 chạy được ở local, sinh ra `.npy` + `index.csv` và tự kiểm tra khớp dữ liệu.
 2. Mở notebook trên Colab, chạy từ mục 4.0 tới 5.4 không lỗi, không cần chạy lại mục 1–3.
-3. Mục 4 in được bảng so sánh 3 backbone và summary của DenseNet121.
+3. Mục 4 in được bảng so sánh 3 backbone và summary của ResNet50.
 4. Cả 3 tỷ lệ split đều train xong, có checkpoint, `train_history_<split>.csv` và `results_splits.csv`.
 5. Mục 5.4 có confusion matrix, classification report, đường cong loss/F1 cho từng tỷ lệ.
 6. Không còn chỗ nào trong notebook nhắc tới phân đoạn như một mục tiêu của đồ án.
