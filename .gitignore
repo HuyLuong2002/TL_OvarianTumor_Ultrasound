@@ -14,6 +14,9 @@ __pycache__/
 # Dataset MMOTU (ảnh/mask lớn, tải riêng)
 dataset/
 
+# Cache ảnh đã CLAHE (~216 MB)
+cache/
+
 # File CSV sinh ra khi chạy notebook
 mmotu_dataset_summary.csv
 mmotu_feature_summary.csv
