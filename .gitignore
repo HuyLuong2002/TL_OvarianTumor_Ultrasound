@@ -21,6 +21,9 @@ cache/
 mmotu_dataset_summary.csv
 mmotu_feature_summary.csv
 mmotu_splits.csv
+per_class_resnet50_paper.csv
+results_comparison.csv
+results_resnet50.csv
 
 # Checkpoint / artifact mô hình
 *.pth
